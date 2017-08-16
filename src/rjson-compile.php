@@ -13,14 +13,15 @@
 /**
  * Initialisation des variables
  *
- * @var string $color_err   Code couleur pour les erreurs
- * @var string $color_in    Code couleur pour les donnée saisie par l'utilisateur
- * @var string $color_suc   Code couleur pour les success
- * @var string $color_war   Code couleur pour les warnings
- * @var array  $longopt     Modèle des options version long (--password=Password)
- * @var array  $options     Argument parsé
- * @var string $workdir     Dossier d'execution courant
- * @var string $shortopt    Modèle des options admis (-pPassword)
+ * @var string  $color_err   Code couleur pour les erreurs
+ * @var string  $color_in    Code couleur pour les donnée saisie par l'utilisateur
+ * @var string  $color_suc   Code couleur pour les success
+ * @var string  $color_war   Code couleur pour les warnings
+ * @var array   $longopt     Modèle des options version long (--password=Password)
+ * @var array   $options     Argument parsé
+ * @var string  $workdir     Dossier d'execution courant
+ * @var string  $shortopt    Modèle des options admis (-pPassword)
+ * @var boolean $stdx        Indique s'il y à eu des sortie STDERR et STDOUT
  */
 // Couleurs
 $color_err = "196";
@@ -44,6 +45,9 @@ $longopt = Array(
 // Emplacement
 $workdir = $_SERVER["PWD"];
 
+// Flags
+$stdx = false;
+
 
 /**
  * Procède à la conversion des fichiers rjson en json
@@ -51,10 +55,78 @@ $workdir = $_SERVER["PWD"];
  * @param string $src
  * @param string $target
  */
-function compiler($src, $target = null){
+function compiler($source, $target){
     global $options;
+    $json = null;
 
-    stdout("%s vers %s", [$src, $target]);
+    /**
+     * Récupération des informations sur la sources
+     */
+    $infos = pathinfo($source);
+    $filename = $infos["filename"];
+
+    /**
+     * Récupération du contenu du fichier
+     */
+    $rjson = file_get_contents($source);
+
+    /**
+     * Conversion
+     */
+    // 1. Suppression de tous les commentaires
+    // 2. Chercher une variable, sont nom et sa valeur
+    $json = $rjson;
+
+
+    /**
+     * Enregistrement
+     */
+    // STDOUT
+    if(is_null($target)){
+        fwrite(STDOUT, $json.PHP_EOL);
+    }
+    // DEPOSIT
+    if(is_array($target)){
+        foreach($target as $index => $value){
+            if(file_exists($value)){
+                if(is_dir($value)){
+                    file_put_contents("$value/$filename.json", $json);
+                }
+                if(is_file($value)){
+                    file_put_contents($value, $json);
+                }
+            } else {
+                // Modele spécifiant un dossier cible
+                if(preg_match("#\/$#", $value)){
+                    mkdir($value, 0755, true);
+                    file_put_contents("$value/$filename.json", $json);
+                }
+                else {
+                    file_put_contents($value, $json);
+                }
+            }
+        }
+    }
+    // FILE / FOLDER
+    if(is_string($target)){
+        if(file_exists($target)){
+            if(is_dir($target)){
+               file_put_contents("$target/$filename.json", $json);
+            }
+            if(is_file($target)){
+                file_put_contents($target, $json);
+            }
+        } else {
+            // Modele spécifiant un dossier cible
+            if(preg_match("#\/$#", $target)){
+                mkdir($target, 0755, true);
+                file_put_contents("$target/$filename.json", $json);
+            }
+            else {
+                file_put_contents($target, $json);
+            }
+        }
+    }
 }
 
 /**
@@ -92,16 +164,20 @@ HowTo Examples :
         RESULT : COmpile my-file.rjson to compiled.json
         
 HELP;
+    echo PHP_EOL;
 }
 
 /**
- * @param $message
- * @return mixed
+ * Met en évidence les valeurs utilisateur dans les messages
+ *
+ * @param  string $message   Message à analyser
+ *
+ * @return string $message   Message traité
  */
 function highlight($message){
     global $color_in;
 
-    // Entourer tout les specificateur de type par le code de colorisation
+    // Entourer tout les specificateurs de type par le code de colorisation
     $message = preg_replace("#(%[a-zA-Z0-9])#", "\e[38;5;{$color_in}m$1\e[0m", $message);
 
     return $message;
@@ -111,148 +187,160 @@ function highlight($message){
  * Analyse de la cohérance des options et de leur disponibilité
  *
  * @param string $directory
- * @param string $input     Si défini, alors la fonction se comporte comme une recusrion
  *
  * @return void
  */
-function parser($directory, $read_options = true){
+function parser($directory){
     global $options;
-    static $outputs = null;
-    static $each_target = false;
+    //static $outputs = null;
+    //static $each_target = false;
+    $deposit = false;
 
-    // Définition des sources et des sorties
-    if($read_options) {
-        /**
-         * Analyse des Inputs
-         */
-        // Chercher les fichier sources à traiter (input)
-        $input = @($options["i"]) ?: @$options["in"];
+    /**
+     * Analyse des Inputs
+     */
+    // Chercher les fichier sources à traiter (input)
+    $input = @($options["i"]) ?: @$options["in"];
 
-        // Passer l'entrée en tableau pour standardiser le traitements des sources
-        $sources = (is_array($input)) ? $input : Array($input);
+    // Passer l'entrée en tableau pour standardiser le traitements des sources
+    $sources = (is_array($input)) ? $input : Array($input);
 
-        // Completion des chemins en absolu
-        array_walk($sources, function (&$el) use ($directory) {
-            // Si l'élement n'est pas une source absolue
-            if (!preg_match("#^\/#", $el)) $el = $directory . "/" . $el;
-        });
+    // Completion des chemins en absolu
+    array_walk($sources, function (&$el) use ($directory) {
+        // Si l'élement n'est pas une source absolue
+        if (!preg_match("#^\/#", $el)) $el = $directory . "/" . $el;
+    });
 
-        // Dédoublonner
-        $sources = array_unique($sources);
-
-
-        /**
-         * Analyse des sorties
-         */
-        // Chercher la/les sortie(s) (output)
-        $outputs = @($options["o"]) ?: @$options["out"];
-
-        // Si une seule valeur fournie elle est au format chaine
-        if(is_string($outputs)) $outputs = [$outputs];
-
-        // Completion des chemins en absolu
-        if(is_array($outputs)) array_walk($outputs, function(&$el) use ($directory){
-            // Si l'élement n'est pas une source absolue
-            if (!preg_match("#^\/#", $el)) $el = $directory . "/" . $el;
-        });
-
-        // Dédoublonner
-        if(is_array($outputs)) $outputs = array_unique($outputs);
+    // Dédoublonner
+    $sources = array_unique($sources);
 
 
-        /**
-         * Analyser l'existance des Fichiers et Dossiers sources
-         * Les sorties seront créée si elles n'existent pas
-         */
-        foreach($sources as $key => $value){
-            if(!file_exists($value)) stderr("The following source %s doesn't exist.", [$value], 1);
-        }
+    /**
+     * Analyse des sorties
+     */
+    // Chercher la/les sortie(s) (output)
+    $outputs = @($options["o"]) ?: @$options["out"];
+
+    // Si une seule valeur fournie elle est au format chaine
+    if(is_string($outputs)) $outputs = [$outputs];
+
+    // Completion des chemins en absolu
+    if(is_array($outputs)) array_walk($outputs, function(&$el) use ($directory){
+        // Si l'élement n'est pas une source absolue
+        if (!preg_match("#^\/#", $el)) $el = $directory . "/" . $el;
+    });
+
+    // Dédoublonner
+    if(is_array($outputs)) $outputs = array_unique($outputs);
 
 
-        /**
-         * Analyser le système de sortie
-         */
-        // Si pas de sortie spécifiée (null), alors vers STDOUT pour tous
-
-        // Si autant de sorties que de sources, alors pas de soucis
-        //  - FICHIER >> FICHIER (create si not exist)
-        //  - FICHIER >> DOSSIER (create full path si not exist)
-        //
-        //  - DOSSIER >> FICHIER (Nécéssite --merge)
-        if(count($sources) === count($outputs)){
-            // Chercher un système DOSSIER VERS FICHIER
-            foreach($sources as $index => $source){
-                $merge_required = false;
-                if(is_dir($source)){
-                    // Soit la cible existe et on peu identifier
-                    if(file_exists($outputs[$index]) && is_file($outputs[$index])) $merge_required = true;
-                    // Soit c'est la notation qui fais fois
-                    if(!file_exists($outputs[$index]) && !preg_match("#\/$#",$outputs[$index])) $merge_required = true;
-                    if($merge_required && (!isset($options["merge"]) && !isset($options["m"]))) stderr(
-                        "The input folder %s will be compile entirely toward the file %s. To confirm the behavior, please use %s option.",
-                        [$source, $outputs[$index], '--merge'],
-                        1
-                    );
-                }
-            }
-        }
-
-        // Si Différences entre les entrées et les sorties, alors le tout est duppliqué dans chaque sortie1
-        // - Il doit s'agir que de dossier de sortie
-        // - Si des fichiers, alors --merge required
-        if(count($sources) !== count($outputs)){
-            // Chercher la présence de fichier afin d'emettre une alerte sur le comportement
-            $merge_required = false;
-            foreach ($outputs as $index => $value){
-                if(file_exists($value) && is_file($value)) $merge_required = true;
-                if(!file_exists($value) && !preg_match("#\/$#", $value)) $merge_required = true;
-                if($merge_required && (!isset($options["merge"]) && !isset($options["m"]))) stderr(
-                    "The different input will be compile entirely toward the file %s. To confirm the behavior, please us %s option.",
-                    [$value, "--merge"],
-                    1
-                );
-            }
-
-            $each_target = true;
-        }
+    /**
+     * Analyser l'existance des Fichiers et Dossiers sources
+     * Les sorties seront créée si elles n'existent pas
+     */
+    foreach($sources as $key => $value){
+        if(!file_exists($value)) stderr("The following source %s doesn't exist.", [$value], 1);
     }
 
 
+    /**
+     * Analyser le système de sortie
+     */
+    // Si pas de sortie spécifiée (null), alors vers STDOUT pour tous
+
+    // Si autant de sorties que de sources, alors pas de soucis
+    //  - FICHIER >> FICHIER (create si not exist)
+    //  - FICHIER >> DOSSIER (create full path si not exist)
+    //
+    //  - DOSSIER >> FICHIER (Nécéssite --merge)
+    if(count($sources) === count($outputs)){
+        // Chercher un système DOSSIER VERS FICHIER
+        foreach($sources as $index => $source){
+            $merge_required = false;
+            if(is_dir($source)){
+                // Soit la cible existe et on peu identifier
+                if(file_exists($outputs[$index]) && is_file($outputs[$index])) $merge_required = true;
+                // Soit c'est la notation qui fais fois
+                if(!file_exists($outputs[$index]) && !preg_match("#\/$#",$outputs[$index])) $merge_required = true;
+                if($merge_required && (!isset($options["merge"]) && !isset($options["m"]))) stderr(
+                    "The input folder %s will be compile entirely toward the file %s. To confirm the behavior, please use %s option.",
+                    [$source, $outputs[$index], '--merge'],
+                    1
+                );
+            }
+        }
+    }
+
+    // Si Différences entre les entrées et les sorties, alors le tout est duppliqué dans chaque sortie1
+    // - Il doit s'agir que de dossier de sortie
+    // - Si des fichiers, alors --merge required
+    if(count($outputs) > 0 && count($sources) !== count($outputs)){
+        // Chercher la présence de fichier afin d'emettre une alerte sur le comportement
+        $merge_required = false;
+        foreach ($outputs as $index => $value){
+            if(file_exists($value) && is_file($value)) $merge_required = true;
+            if(!file_exists($value) && !preg_match("#\/$#", $value)) $merge_required = true;
+            if($merge_required && (!isset($options["merge"]) && !isset($options["m"]))) stderr(
+                "The different input will be compile entirely toward the file %s. To confirm the behavior, please us %s option.",
+                [$value, "--merge"],
+                1
+            );
+        }
+
+        $deposit = true;
+    }
 
 
+    /**
+     * Processing des sources
+     */
+    foreach ($sources as $index => $source){
+        // Déterminer la cible qui convient
+        $target = null;
+        if($deposit){
+            $target = $outputs;
+        } else {
+            $target = $outputs[$index];
+        }
 
+        processor($source, $target);
+    }
+}
 
-        //// Parcourir les sources
-        //foreach ($sources as $index => $source) {
-        //    // Controler l'existance de la source demandé
-        //    if (file_exists($source)) {
-        //        // Contrôler le type de source : FILE ou DIR
-        //        if (is_dir($source)) {
-        //
-        //        } else {
-        //            // Procéder à la compilation du fichier
-        //            compiler($source);
-        //        }
-        //    } else {
-        //        // Ne peux qu'échouer dans l'appel initial.
-        //        // Si pas read_option c'est récursif et appelé par programme
-        //        if ($read_options) stderr("File or folder %s doesn't exist", [$source], 1);
-        //    }
-        //}
+/**
+ * Gestionnaire de lecture des entrée pour déclencher les compilation
+ *
+ * @param string $source   Chemin absolu vers la source à traiter
+ * @param mixed  $target   Emplacement de dépot
+ */
+function processor($source, $target){
+    global $options;
+    $recursively = false;
 
-    // // Controler l'existance du fichier/dossier demandé
-    //     // Vérifier si c'est un ficier ou un dossier
-    //     if(is_dir($full_path)){
-    //         // Analyser le dossier
+    /**
+     * Vérification de l'option "Recursive"
+     */
+    if(isset($options["r"]) || isset($options["recursive"])) $recursively = true;
 
-    //         //// Si l'option "recursive" est définie, alors analyser le sous dossier.
-    //         //if(isset($options["r"]) || isset($options["recursive"])){
-    //         //    true;
-    //         //}
-    //     } else {
-    //         // Vérifier si un fichier cible est défini
-    //         $target = @($options["o"]) ?: @($options["out"]) ?: null;
-    //     }
+    /**
+     * Traitement de la source
+     */
+    if(is_dir($source)){
+        $files = scandir($source);
+
+        foreach($files as $index => $file){
+            if(is_dir("$source/$file")){
+                if($recursively) processor($source, $target);
+            } else {
+                if(preg_match("#\.rjson$#", $file)){
+                    compiler("$source/$file", $target);
+                }
+            }
+        }
+    }
+    else {
+        compiler($source, $target);
+    }
 }
 
 /**
@@ -324,6 +412,4 @@ if(isset($options["h"]) || isset($options["help"])) help();
 /**
  * Forcer le retour à la ligne de la console
  */
-echo PHP_EOL;
-
-
+//if($stdx) echo PHP_EOL;

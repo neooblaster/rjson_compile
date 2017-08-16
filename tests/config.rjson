@@ -1,0 +1,6 @@
+/**
+ * Commentaire
+ * @type {{}}
+ */
+// Commentaire
+var palette = {"pty": "value"};

@@ -1,0 +1,7 @@
+/**
+ * connexion.rjson
+ * Commentaire
+ * @type {{}}
+ */
+// Commentaire
+var palette = {"pty": "value"};
