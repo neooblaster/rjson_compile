@@ -1,0 +1,63 @@
+/**
+ * File :: themes-palette.rjson
+ *
+ * @author    Nicolas DUPRE
+ * @release   15/08/2017
+ * @version   0.1.0
+ * @package   Build
+ *
+ * Fichier de configuration des couleurs.
+ * Il doit y avoir autant de couleur qu'il y à de themes.
+ * Les clés sont au singulier pour un nommage plus naturel dans les fichier LESS
+ *
+ * Les couleurs génériques ne définissent pas des couleurs de thème et ne doit pas être un tableau
+ *
+ * Possibilité de créer des pointeurs à l'aide de l'ampersand : &
+ *   - Si c'est une chaine contenant l'ampersand, alors la couleur sera appliquée à tous les thèmes
+ *   - Si c'est un tableau dont un des éléments contient l'ampersand, alors celle-ci sera traduite pour le thème
+ *     donné
+ *   - Si l'ampersand pointe vers une clé dont la valeur est un tableau, alors celui-ci sera copier
+ *
+ * Définir un pointeur pour un thème donnée doit pointée vers une couleur générique ou bien spécifier l'index
+ * du thème :
+ *   Example : $color.background.menu.0
+ *
+ */
+var palette = {
+    "themes": ["blue", "gray"],
+
+    "generic": {
+        "darkred": "#c00000"
+    },
+
+    "color": {
+        "background": {
+            "menu": ["#0e2431", "#222222"],
+            "body": {
+                "start": ["#003849", "#333333"],
+                "end": ["#0f5366", "#4c4c4c"]
+            }
+        },
+
+        "border": {
+            "input": {
+                "active": "&generic.darkred"
+            }
+        },
+
+        "element": {
+            "pictogram": {
+                "background": ["#105366", "#4b4b4b"],
+                "signout": {
+                    "arrow": "&generic.darkred"
+                }
+            }
+        },
+
+        "text": {
+            "standard": ["white", "white"],
+            "keyword": ["#00a3e4", "#e3bd00"],
+            "active": ["#6ddc00", "#6ddc00"]
+        }
+    }
+}
