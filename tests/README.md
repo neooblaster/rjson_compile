@@ -4,7 +4,7 @@
 
 * Un ``fichier`` source : **config.rjson**.
 
-rjson-compile -i config.rjson
+> rjson-compile -i config.rjson
 
 
 ## Test 02 :
@@ -12,14 +12,14 @@ rjson-compile -i config.rjson
 * Un ``dossier`` sources : dossier courant.
     * config.rjson
 
-rjson-compile -i .
+> rjson-compile -i .
 
 
 ## Test 03 :
 
 * Deux ``fichiers`` source : **config.rjson** et **settings.rjson**.
 
-rjson-compile -i config.rjson -i settings.rjson
+> rjson-compile -i config.rjson -i settings.rjson
 
 
 ## Test 02 :
@@ -32,4 +32,4 @@ rjson-compile -i config.rjson -i settings.rjson
         * connexion.rjson
         * credentials.rjson
 
-rjson-compile -i DIR1 -i DIR2
+> rjson-compile -i DIR1 -i DIR2

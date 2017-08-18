@@ -28,6 +28,7 @@ $color_err = "196";
 $color_in  = "220";
 $color_suc = "76";
 $color_war = "208";
+$color_txt = "221";
 
 // Options
 $options = null;
@@ -39,7 +40,9 @@ $longopt = Array(
     "recursive",
     "merge",
     "progress",
-    "verbose"
+    "verbose",
+    "pretty",
+    "preserve-root"
 );
 
 // Emplacement
@@ -56,8 +59,15 @@ $stdx = false;
  * @param string $target
  */
 function compiler($source, $target){
-    global $options;
+    global $options, $color_err, $color_txt, $color_suc;
     $json = null;
+
+
+    /**
+     * Traitements des options
+     */
+    $pretty_print = (isset($options["pretty"])) ? JSON_PRETTY_PRINT : 0;
+
 
     /**
      * Récupération des informations sur la sources
@@ -65,17 +75,63 @@ function compiler($source, $target){
     $infos = pathinfo($source);
     $filename = $infos["filename"];
 
+
     /**
      * Récupération du contenu du fichier
      */
     $rjson = file_get_contents($source);
 
+
     /**
      * Conversion
      */
-    // 1. Suppression de tous les commentaires
-    // 2. Chercher une variable, sont nom et sa valeur
-    $json = $rjson;
+    // 1. Cleansing
+    // 1.1. Sécurisation du modèle commentaire dans les block textes
+    $rjson = preg_replace_callback("#[\"']\K(.*)[\"']#U", function($matches){
+        return preg_replace("#\/#", "&slash;", $matches[0]);
+    }, $rjson);
+    // 1.2. Suppression des commentaires en ligne
+    $rjson = preg_replace("#\/\/.*#", "", $rjson);
+    // 1.3. Suppression des commentaire en block
+    $rjson = preg_replace("#\/\*+(.*\s)*\*+\/#U", "", $rjson);
+    // 1.4. Suppression des lignes vide
+    $rjson = preg_replace("#^\s*\n#", "", $rjson);
+    // 1.5. Restitution des slash modifier
+    $rjson = preg_replace("#&slash;#", "/", $rjson);
+
+    // 2. Récuoération des variables déclarée
+
+    // 3. Récupération des structures
+    preg_match_all("#(.*)\s+=\s+({(\s*.*)*});#U", $rjson, $matches);
+    // Match 0 :: [var] name = {structure}
+    // Match 1 :: [var] name
+    // Match 2 :: {structure}
+    // Match 3 :: empty
+    $jsons = Array();
+
+    foreach ($matches[1] as $index => $match){
+        // Supprimer le mot clef "var" si présent
+        $match = preg_replace("/^var\s+/", "", $match);
+
+        // Recupération de la structure associée
+        $structure = $matches[2][$index];
+
+        // JSON_DECODAGE
+        $jsons[$match] = json_decode($structure, true);
+        if(json_last_error()) stderr("$color_err>%s for %s in the following JSON structure : $color_txt>%s", [json_last_error_msg(), $match, $structure], 1);
+    }
+
+    // 4. Complétion des références et variables
+    array_walk_recursive($jsons, function(&$setted) use ($jsons){
+        // Est-ce une référence
+        if(preg_match("/^&/", $setted)){
+            // Resolution de la valeur
+            $setted = resolver($setted, $jsons, $setted);
+        }
+    });
+
+    // 5. Converson au format JSON
+    $json = json_encode($jsons, $pretty_print);
 
 
     /**
@@ -152,6 +208,7 @@ List of all available argument for docotomate
     -m, --merge        If your output is file whereas your process a directory
                        you will need to merge them
     -p, --progress     Show progress barre
+        --pretty       Use whitespace in returned data to format it.
 
 
 HowTo Examples :
@@ -177,8 +234,11 @@ HELP;
 function highlight($message){
     global $color_in;
 
-    // Entourer tout les specificateurs de type par le code de colorisation
-    $message = preg_replace("#(%[a-zA-Z0-9])#", "\e[38;5;{$color_in}m$1\e[0m", $message);
+    // A tous ceux qui n'ont pas de couleur spécifiée, alors saisir la couleur par défaut
+    $message = preg_replace("/(?<!>)(%[a-zA-Z0-9])/", "$color_in>$1", $message);
+
+    // Remplacer par le code de colorisation Shell
+    $message = preg_replace("#([0-9]+)>(%[a-zA-Z0-9])#", "\e[38;5;$1m$2\e[0m", $message);
 
     return $message;
 }
@@ -354,6 +414,67 @@ function progress($current, $total){
 }
 
 /**
+ * Résoud les différents pointeur interne
+ *
+ * @param string   $reference  Référence à résoudre (ex: &cfg.db.user)
+ * @param array    $source     Jeu de donnée de base dans lequel trouver &cfg.db.user
+ * @param string   $root       Référence d'origine - Permet l'antibloucle infinie
+ * @param bool     $first      Indique que c'est l'appel d'origine (par une recursion)
+ *
+ * @return string  Retourne la valeur traitée
+ */
+function resolver($reference, $source, $root, $first=true){
+    global $color_err, $color_suc;
+
+    $value = null;
+    $from = null;
+    $path = null;
+    $path_resolved = null;
+    $last_level = null;
+    $has_broken = false;
+
+    // 1. Controle anti-boucle
+    if(!$first && $reference === $root){
+        stderr("By resolution, the reference %s point on itself. Resolution kill to prevent infinite loop", [$root], 1);
+    }
+
+    // 2. Suppression de l'indicateur de référence
+    $reference = preg_replace("/^&/", "", $reference);
+
+    // 3. Exploser en chemin (path)
+    $path = preg_split("/\./", $reference);
+
+    foreach ($path as $index => $level){
+        $last_level = $level;
+        // Déterminer la source de lecture
+        $from = (is_null($value)) ? $source : $value;
+
+        // Si le niveau n'existe pas, on ne peux pas résoudre la référence
+        if(!isset($from[$level])){
+            // "A été intérompu"
+            $has_broken = true;
+            break;
+        }
+
+        // Sinon on récupère la valeur
+        $value = $from[$level];
+
+        // Sauvegarde le chemin parcouru
+        $path_resolved .= (is_null($path_resolved)) ? $level : ".$level";
+    };
+
+    // 4. Contrôle de résolution
+    if($has_broken) stderr("Can't find pointed value %s [$color_err>%s]. The engine can only resolve $color_suc>%s", [$reference, $last_level, $path_resolved], 1);
+
+    // 5. Controle de la valeur obtenue
+    if(preg_match("/^&/", $value)){
+        $value = resolver($value, $source, $root, false);
+    }
+
+    return $value;
+}
+
+/**
  * Emet des messages dans le flux STDERR de niveau WARNING ou ERROR
  *
  * @param string $message Message à afficher dans le STDERR
@@ -407,9 +528,3 @@ if(isset($options["h"]) || isset($options["help"])) help();
 
 // Compilation
 (isset($options["i"]) || isset($options["in"])) ? parser($workdir) : help();
-
-
-/**
- * Forcer le retour à la ligne de la console
- */
-//if($stdx) echo PHP_EOL;

@@ -1,0 +1,11 @@
+var db_cfg = {
+    "user": "sdfdsf",
+    "password": {
+        "mdp": "P@sswOrd",
+        "key": "sha256"
+    }
+};
+
+var ssh_cfg = {
+    "vps": "433401"
+};

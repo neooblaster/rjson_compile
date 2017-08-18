@@ -19,6 +19,10 @@ Ligne */
 
 ## Système de référence interne
 
+``&`` référence interne
+
+``$`` appel une variable global
+
 
 ## Utilisation
 
