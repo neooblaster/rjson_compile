@@ -1,11 +1,11 @@
-#!/usr/bin/php
+#!/usr/bin/env php
 <?php
 /**
  * File :: rsjon-compile.php
  *
  * @author    Nicolas DUPRE
  * @release   15/08/2017
- * @version   1.0.0
+ * @version   0.1.0
  * @package   Index
  */
 
